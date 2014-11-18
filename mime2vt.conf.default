@@ -1,0 +1,3 @@
+[virustotal]
+apikey: <your_virustotal_api_key>
+exclude: image/png,image/gif,image/jpeg,text/plain,text/html
