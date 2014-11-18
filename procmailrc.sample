@@ -1,0 +1,18 @@
+DELIVER=/usr/lib/dovecot/deliver
+
+:0
+* ^X-Spam-Status: Yes,.*
+{
+	:0c
+	| /usr/local/bin/mime2vt.py -d /tmp/mime -c /home/xavier/mime2vt.conf
+
+	:0c
+	/tmp/spam.debug
+
+	:0
+	| $DELIVER -m spam
+}
+
+:0
+* ^From.*
+| $DELIVER -m incoming
