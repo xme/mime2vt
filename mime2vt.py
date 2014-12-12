@@ -19,12 +19,21 @@ import sys
 import time
 import zipfile
 import syslog
+from elasticsearch import Elasticsearch
 from virus_total_apis import PublicApi as VirusTotalPublicApi
 from optparse import OptionParser
 from datetime import datetime
+from dateutil import parser
 
-apikey = ''
 args = ''
+
+# Default configuration 
+config = {
+	'apiKey': '',
+	'esServer': '',
+	'esIndex': 'virustotal'
+}
+
 
 def timeDiff(t):
 
@@ -45,13 +54,18 @@ def submit2vt(filename):
 	"""Submit a new file to VT for scanning"""
 
 	# Check VT score
-	vt = VirusTotalPublicApi(apikey)
+	vt = VirusTotalPublicApi(config['apiKey'])
 	response = vt.scan_file(filename)
 
 	# DEBUG
 	fp = open('/tmp/vt.debug', 'a')
 	fp.write(json.dumps(response, sort_keys=False, indent=4))
 	fp.close()
+
+	if config['esServer']:
+		# Save results to Elasticsearch
+		response['@timestamp'] = time.strftime("%Y-%m-%dT%H:%M:%S+01:00")
+		res = es.index(index=config['esIndex'], doc_type="VTresult", body=json.dumps(response))
 
 	return
 
@@ -70,8 +84,13 @@ def processZipFile(filename):
 		fp.write(data)
 		fp.close()
 		md5 = hashlib.md5(data).hexdigest()
-		vt = VirusTotalPublicApi(apikey)
+		vt = VirusTotalPublicApi(config['apiKey'])
 		response = vt.get_file_report(md5)
+
+		if config['esServer']:
+			# Save results to Elasticsearch
+			response['@timestamp'] = time.strftime("%Y-%m-%dT%H:%M:%S+01:00")
+			res = es.index(index=config['esIndex'], doc_type="VTresult", body=json.dumps(response))
 
 		# DEBUG
 		fp = open('/tmp/vt.debug', 'a')
@@ -92,8 +111,9 @@ def processZipFile(filename):
 	return
 
 def main():
-	global apikey
 	global args
+	global config
+	global es
 	global verbose
 
 	parser = argparse.ArgumentParser(
@@ -120,10 +140,13 @@ def main():
 		args.config_file = '/etc/mime2vt.conf'
 
 	try:
-		config = ConfigParser.ConfigParser()
-		config.read(args.config_file)
-		apikey = config.get('virustotal', 'apikey')
-		excludeypes = config.get('virustotal', 'exclude').split(',')
+		c = ConfigParser.ConfigParser()
+		c.read(args.config_file)
+		config['apiKey'] = c.get('virustotal', 'apikey')
+		excludetypes = c.get('virustotal', 'exclude').split(',')
+		# Elasticsearch config
+		config['esServer'] = c.get('elasticsearch', 'server')
+		config['esIndex'] = c.get('elasticsearch', 'index')
 	except OSError as e:
 		writeLog('Cannot read config file %s: %s' % (args.config_file, e.errno))
 		exit
@@ -135,7 +158,10 @@ def main():
 		if e.errno != errno.EEXIST:
 			raise
 
-	exit 
+	if config['esServer']:
+		print "DEBUG: using elk"
+		es = Elasticsearch([config['esServer']])
+
 	# Read the mail flow from STDIN
 	data = "" . join(sys.stdin)
 	msg = email.message_from_string(data)
@@ -169,8 +195,13 @@ def main():
 					processZipFile(os.path.join(args.directory, filename))
 				else:
 					# Check VT score
-					vt = VirusTotalPublicApi(apikey)
+					vt = VirusTotalPublicApi(config['apiKey'])
 					response = vt.get_file_report(md5)
+
+					# Save results to Elasticsearch
+					if config['esServer']:
+						response['@timestamp'] = time.strftime("%Y-%m-%dT%H:%M:%S+01:00")
+						res = es.index(index=config['esIndex'], doc_type="VTresult", body=json.dumps(response))
 
 					# DEBUG
 					fp = open('/tmp/vt.debug', 'a')
