@@ -1,3 +1,7 @@
 [virustotal]
 apikey: <your_virustotal_api_key>
 exclude: image/png,image/gif,image/jpeg,text/plain,text/html
+
+[elasticsearch]
+server: http://127.0.0.1:9200
+index: virustotal
