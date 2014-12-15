@@ -9,12 +9,12 @@ Or via tools like Procmail:
 
 :0
 * ^X-Spam-Flag: YES
-{
+\{
         :0c
         | /usr/local/bin/mime2vt.py -d /tmp/mime -c /home/xavier/.mime2vt.conf
 	:0
 	spam
-}
+\}
 
 Usage
 -----
