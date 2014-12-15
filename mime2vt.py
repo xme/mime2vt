@@ -13,6 +13,7 @@ import email
 import errno
 import hashlib
 import json
+import logging
 import mimetypes
 import os
 import sys
@@ -64,9 +65,11 @@ def submit2vt(filename):
 
 	if config['esServer']:
 		# Save results to Elasticsearch
-		response['@timestamp'] = time.strftime("%Y-%m-%dT%H:%M:%S+01:00")
-		res = es.index(index=config['esIndex'], doc_type="VTresult", body=json.dumps(response))
-
+		try:
+			response['@timestamp'] = time.strftime("%Y-%m-%dT%H:%M:%S+01:00")
+			res = es.index(index=config['esIndex'], doc_type="VTresult", body=json.dumps(response))
+		except:
+			writeLog("Cannot index to Elasticsearch")
 	return
 
 def processZipFile(filename):
@@ -78,7 +81,7 @@ def processZipFile(filename):
 		try:
 			data = zf.read(f)
 		except KeyError:
-			print "Cannot extract %s from zip file %s" % (f, filename)
+			writeLog("Cannot extract %s from zip file %s" % (f, filename))
 			return
 		fp = open(os.path.join(args.directory, f), 'wb')
 		fp.write(data)
@@ -89,8 +92,11 @@ def processZipFile(filename):
 
 		if config['esServer']:
 			# Save results to Elasticsearch
-			response['@timestamp'] = time.strftime("%Y-%m-%dT%H:%M:%S+01:00")
-			res = es.index(index=config['esIndex'], doc_type="VTresult", body=json.dumps(response))
+			try:
+				response['@timestamp'] = time.strftime("%Y-%m-%dT%H:%M:%S+01:00")
+				res = es.index(index=config['esIndex'], doc_type="VTresult", body=json.dumps(response))
+			except:
+				writeLog("Cannot index to Elasticsearch")
 
 		# DEBUG
 		fp = open('/tmp/vt.debug', 'a')
@@ -159,7 +165,7 @@ def main():
 			raise
 
 	if config['esServer']:
-		print "DEBUG: using elk"
+		logging.basicConfig()
 		es = Elasticsearch([config['esServer']])
 
 	# Read the mail flow from STDIN
@@ -200,8 +206,11 @@ def main():
 
 					# Save results to Elasticsearch
 					if config['esServer']:
-						response['@timestamp'] = time.strftime("%Y-%m-%dT%H:%M:%S+01:00")
-						res = es.index(index=config['esIndex'], doc_type="VTresult", body=json.dumps(response))
+						try:
+							response['@timestamp'] = time.strftime("%Y-%m-%dT%H:%M:%S+01:00")
+							res = es.index(index=config['esIndex'], doc_type="VTresult", body=json.dumps(response))
+						except:
+							writeLog("Cannot index to Elasticsearch")
 
 					# DEBUG
 					fp = open('/tmp/vt.debug', 'a')
