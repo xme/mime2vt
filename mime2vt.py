@@ -16,6 +16,7 @@ import json
 import logging
 import mimetypes
 import os
+import re
 import sys
 import time
 import zipfile
@@ -87,8 +88,10 @@ def processZipFile(filename):
 		fp.write(data)
 		fp.close()
 		md5 = hashlib.md5(data).hexdigest()
+		writeLog("DEBUG: Extracted MD5 %s from Zip" % md5)
 		vt = VirusTotalPublicApi(config['apiKey'])
 		response = vt.get_file_report(md5)
+		writeLog("DEBUG: VT Response recevied")
 
 		if config['esServer']:
 			# Save results to Elasticsearch
@@ -97,11 +100,13 @@ def processZipFile(filename):
 				res = es.index(index=config['esIndex'], doc_type="VTresult", body=json.dumps(response))
 			except:
 				writeLog("Cannot index to Elasticsearch")
+		writeLog("DEBUG: Step1")
 
 		# DEBUG
 		fp = open('/tmp/vt.debug', 'a')
 		fp.write(json.dumps(response, sort_keys=False, indent=4))
 		fp.close()
+		writeLog("DEBUG: Step1: %s" % response['results']['response_code'])
 
 		if response['results']['response_code']:
 			positives = response['results']['positives']
@@ -137,6 +142,10 @@ def main():
 		dest = 'config_file',
 		help = 'configuration file (default: /etc/mime2vt.conf)',
 		metavar = 'CONFIG')
+	parser.add_argument('-l', '--log',
+		dest = 'dump_file',
+		help = 'mail dump file (default /tmp/message.dump)',
+		metavar = 'DUMPFILE')
 	args = parser.parse_args()
 
 	# Default values
@@ -172,12 +181,39 @@ def main():
 	data = "" . join(sys.stdin)
 	msg = email.message_from_string(data)
 
+	if args.dump_file:
+		try:
+			fp = open(args.dump_file, 'a')
+		except OSError as e:
+			writeLog('Cannot dump message to %s: %s' % (args.dump_file, e.errno))
+		fp.write(data)
+		fp.close()
+
 	# Process MIME parts
 	for part in msg.walk():
 		data = part.get_payload(None, True)
 		if data:
 			md5 = hashlib.md5(data).hexdigest()
 			contenttype = part.get_content_type()
+
+			# New: Extract URLS
+			if contenttype in [ 'text/html', 'text/plain' ]:
+				urls = []
+				# Source: https://gist.github.com/uogbuji/705383
+				GRUBER_URLINTEXT_PAT = re.compile(ur'(?i)\b((?:https?://|www\d{0,3}[.]|[a-z0-9.\-]+[.][a-z]{2,4}/)(?:[^\s()<>]+|\(([^\s()<>]+|(\([^\s()<>]+\)))*\))+(?:\(([^\s()<>]+|(\([^\s()<>]+\)))*\)|[^\s`!()\[\]{};:\'".,<>?\xab\xbb\u201c\u201d\u2018\u2019]))')
+				lines = data.split('\n')
+				for line in lines:
+					try:
+						#urls.append(re.search("(?P<url>https?://[^\s]+)", word).group("url"))
+						for url in GRUBER_URLINTEXT_PAT.findall(line):
+							if url[0]:
+								urls.append(url[0])
+					except:
+						pass
+				fp = open('/var/tmp/urls.log', 'a')
+				for url in urls:
+					fp.write("%s\n" % url)
+				fp.close()
 
 			# Process only interesting files
 			# if contenttype not in ('text/plain', 'text/html', 'image/jpeg', 'image/gif', 'image/png'):
