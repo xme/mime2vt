@@ -108,17 +108,20 @@ def processZipFile(filename):
 		fp.close()
 		writeLog("DEBUG: Step1: %s" % response['results']['response_code'])
 
-		if response['results']['response_code']:
-			positives = response['results']['positives']
-			total = response['results']['total']
-			scan_date = response['results']['scan_date']
+		if response['response_code'] == 200:
+			if response['results']['response_code']:
+				positives = response['results']['positives']
+				total = response['results']['total']
+				scan_date = response['results']['scan_date']
 
-			writeLog('File: %s (%s) Score: %s/%s Scanned: %s (%s)' %
-				(f, md5, positives, total, scan_date, timeDiff(scan_date)))
+				writeLog('File: %s (%s) Score: %s/%s Scanned: %s (%s)' %
+					(f, md5, positives, total, scan_date, timeDiff(scan_date)))
+			else:
+				submit2vt(os.path.join(args.directory, f))
+				writeLog('File: %s (%s) not found, submited for scanning' %
+					(f, md5))
 		else:
-			submit2vt(os.path.join(args.directory, f))
-			writeLog('File: %s (%s) not found, submited for scanning' %
-				(f, md5))
+			writeLog('VT Error: %s' % response['error'])
 	return
 
 def main():
@@ -253,18 +256,20 @@ def main():
 					fp.write(json.dumps(response, sort_keys=False, indent=4))
 					fp.close()
 
-					if response['results']['response_code']:
-						positives = response['results']['positives']
-						total = response['results']['total']
-						scan_date = response['results']['scan_date']
+					if response['response_code'] == 200:
+						if response['results']['response_code']:
+							positives = response['results']['positives']
+							total = response['results']['total']
+							scan_date = response['results']['scan_date']
 
-						writeLog('File: %s (%s) Score: %s/%s Scanned: %s (%s)' %
-							(filename, md5, positives, total, scan_date, timeDiff(scan_date)))
+							writeLog('File: %s (%s) Score: %s/%s Scanned: %s (%s)' %
+								(filename, md5, positives, total, scan_date, timeDiff(scan_date)))
+						else:
+							submit2vt(os.path.join(args.directory, filename))
+							writeLog('File: %s (%s) not found, submited for scanning' %
+								(filename, md5))
 					else:
-						submit2vt(os.path.join(args.directory, filename))
-						writeLog('File: %s (%s) not found, submited for scanning' %
-							(filename, md5))
-						
+						writeLog('VT Error: %s' % response['error'])
 
 if __name__ == '__main__':
     main()
