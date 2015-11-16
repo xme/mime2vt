@@ -60,7 +60,7 @@ def dbCreate():
 		db = sqlite3.connect(config['dbPath'])
 		cursor = db.cursor()
 		cursor.execute('''
-			CREATE TABLE files(md5 TEXT PRIMARY KEY)
+			CREATE TABLE files(md5 TEXT PRIMARY KEY, filename TEXT, created DATETIME DEFAULT CURRENT_TIMESTAMP)
 			''')
 		cursor.execute('''
 			CREATE TABLE urls(url TEXT)
@@ -70,15 +70,16 @@ def dbCreate():
 	return
 
 def dbMD5Exists(md5):
-
 	""" Search for a MD5 hash in the database"""
 	""" (Return "1" if found) """
+	if not md5:
+		return 1
 
 	try:
 		db = sqlite3.connect(config['dbPath'])
 	except:
 		writeLog("Cannot open the database file (locked?)")
-		return 0
+		return 1
 	cursor = db.cursor()
 	cursor.execute('''SELECT md5 FROM files WHERE md5=?''', (md5,))
 	if cursor.fetchone():
@@ -87,14 +88,17 @@ def dbMD5Exists(md5):
 	db.close()
 	return 0
 
-def dbAddMD5(md5):
+def dbAddMD5(md5, filename):
+	""" Store a new MD5 hash in the database """
+	if not md5 or not filename:
+		return 0
 	try:
 		db = sqlite3.connect(config['dbPath'])
 	except:
 		writeLog("Cannot open the database file (locked?)")
 		return 0
 	cursor = db.cursor()
-	cursor.execute('''INSERT INTO files(md5) VALUES(?)''', (md5,))
+	cursor.execute('''INSERT INTO files(md5,filename) VALUES(?,?)''', (md5,filename,))
 	db.commit()
 	db.close()
 	writeLog("DEBUG: dbAddMD5: %s" % md5)
@@ -193,7 +197,7 @@ def processZipFile(filename):
 				writeLog('File: %s (%s) Score: %s/%s Scanned: %s (%s)' %
 					(f, md5, positives, total, scan_date, timeDiff(scan_date)))
 			else:
-				submit2vt(os.path.join(args.directory, f))
+				submit2vt(os.path.join(generateDumpDirectory(args.directory), f))
 				writeLog('File: %s (%s) not found, submited for scanning' %
 					(f, md5))
 			dbAddMD5(md5)
@@ -211,7 +215,7 @@ def main():
 		description = 'Unpack MIME attachments from a file and check them against virustotal.com')
 	parser.add_argument('-d', '--directory',
 		dest = 'directory',
-		help = 'directory where files will be extracted (default: /tmp) %d,%m,%y can use used for dynamic names',
+		help = 'directory where files will be extracted (default: /tmp) %%d,%%m,%%y can use used for dynamic names',
 		metavar = 'DIRECTORY')
 	parser.add_argument('-v', '--verbose',
 		action = 'store_false',
@@ -319,7 +323,7 @@ def main():
 				if contenttype == 'application/zip':
 					# Process ZIP archive
 					writeLog('Processing zip archive: %s' % filename)
-					processZipFile(os.path.join(args.directory, filename))
+					processZipFile(os.path.join(generateDumpDirectory(args.directory), filename))
 				else:
 					# Check VT score
 					vt = VirusTotalPublicApi(config['apiKey'])
