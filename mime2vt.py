@@ -20,6 +20,7 @@ import re
 import sys
 import time
 import zipfile
+import sqlite3
 import syslog
 from elasticsearch import Elasticsearch
 from virus_total_apis import PublicApi as VirusTotalPublicApi
@@ -33,7 +34,8 @@ args = ''
 config = {
 	'apiKey': '',
 	'esServer': '',
-	'esIndex': 'virustotal'
+	'esIndex': 'virustotal',
+	'dbPath': '/var/tmp/mime2vt.db'
 }
 
 
@@ -50,6 +52,53 @@ def writeLog(msg):
 	syslog.syslog(msg)
 	return
 
+def dbCreate():
+
+	"""Create the SQLite DB at first run"""
+
+	if (not os.path.isfile(config['dbPath'])):
+		db = sqlite3.connect(config['dbPath'])
+		cursor = db.cursor()
+		cursor.execute('''
+			CREATE TABLE files(md5 TEXT PRIMARY KEY)
+			''')
+		cursor.execute('''
+			CREATE TABLE urls(url TEXT)
+			''')
+		db.commit()
+		db.close()
+	return
+
+def dbMD5Exists(md5):
+
+	""" Search for a MD5 hash in the database"""
+	""" (Return "1" if found) """
+
+	try:
+		db = sqlite3.connect(config['dbPath'])
+	except:
+		writeLog("Cannot open the database file (locked?)")
+		return 0
+	cursor = db.cursor()
+	cursor.execute('''SELECT md5 FROM files WHERE md5=?''', (md5,))
+	if cursor.fetchone():
+		db.close()
+		return 1
+	db.close()
+	return 0
+
+def dbAddMD5(md5):
+	try:
+		db = sqlite3.connect(config['dbPath'])
+	except:
+		writeLog("Cannot open the database file (locked?)")
+		return 0
+	cursor = db.cursor()
+	cursor.execute('''INSERT INTO files(md5) VALUES(?)''', (md5,))
+	db.commit()
+	db.close()
+	writeLog("DEBUG: dbAddMD5: %s" % md5)
+	return 0
 
 def submit2vt(filename):
 
@@ -73,6 +122,29 @@ def submit2vt(filename):
 			writeLog("Cannot index to Elasticsearch")
 	return
 
+def generateDumpDirectory(path):
+
+	"""Generate the destination directory to dump files"""
+
+	# Prepare the output directory:
+	# %m -> month
+	# %d -> day
+	# %y -> year
+	t = datetime.date.today()
+	t_day   = '%02d' % t.day
+	t_month = '%02d' % t.month
+	t_year = '%04d' % t.year
+	path.replace('%d', t_day)
+	path.replace('%m', t_month)
+	path.replace('%y', t_year)
+	try:
+		os.makedirs(path)
+	except OSError as e:
+		# Ignore directory exists error
+		if e.errno != errno.EEXIST:
+			raise
+	return(path)
+
 def processZipFile(filename):
 
 	"""Extract files from a ZIP archive and test them against VT"""
@@ -84,10 +156,14 @@ def processZipFile(filename):
 		except KeyError:
 			writeLog("Cannot extract %s from zip file %s" % (f, filename))
 			return
-		fp = open(os.path.join(args.directory, f), 'wb')
+		fp = open(os.path.join(generateDumpDirectory(args.directory), f), 'wb')
 		fp.write(data)
 		fp.close()
 		md5 = hashlib.md5(data).hexdigest()
+		if dbMD5Exists(md5):
+			writeLog("DEBUG: MD5 %s exists" % md5)
+			continue
+
 		writeLog("DEBUG: Extracted MD5 %s from Zip" % md5)
 		vt = VirusTotalPublicApi(config['apiKey'])
 		response = vt.get_file_report(md5)
@@ -120,6 +196,7 @@ def processZipFile(filename):
 				submit2vt(os.path.join(args.directory, f))
 				writeLog('File: %s (%s) not found, submited for scanning' %
 					(f, md5))
+			dbAddMD5(md5)
 		else:
 			writeLog('VT Error: %s' % response['error'])
 	return
@@ -134,7 +211,7 @@ def main():
 		description = 'Unpack MIME attachments from a file and check them against virustotal.com')
 	parser.add_argument('-d', '--directory',
 		dest = 'directory',
-		help = 'directory where files will be extracted (default: /tmp)',
+		help = 'directory where files will be extracted (default: /tmp) %d,%m,%y can use used for dynamic names',
 		metavar = 'DIRECTORY')
 	parser.add_argument('-v', '--verbose',
 		action = 'store_false',
@@ -157,6 +234,8 @@ def main():
 	if not args.config_file:
 		args.config_file = '/etc/mime2vt.conf'
 
+	#writeLog('DEBUG: config_file = %s' % args.config_file)
+
 	try:
 		c = ConfigParser.ConfigParser()
 		c.read(args.config_file)
@@ -165,20 +244,17 @@ def main():
 		# Elasticsearch config
 		config['esServer'] = c.get('elasticsearch', 'server')
 		config['esIndex'] = c.get('elasticsearch', 'index')
+		config['dbPath'] = c.get('database', 'dbpath')
 	except OSError as e:
 		writeLog('Cannot read config file %s: %s' % (args.config_file, e.errno))
 		exit
 
-	try:
-		os.mkdir(args.directory)
-	except OSError as e:
-		# Ignore directory exists error
-		if e.errno != errno.EEXIST:
-			raise
-
 	if config['esServer']:
 		logging.basicConfig()
 		es = Elasticsearch([config['esServer']])
+
+	# Create the SQLite DB
+	dbCreate()
 
 	# Read the mail flow from STDIN
 	data = "" . join(sys.stdin)
@@ -197,6 +273,10 @@ def main():
 		data = part.get_payload(None, True)
 		if data:
 			md5 = hashlib.md5(data).hexdigest()
+			if dbMD5Exists(md5):
+				writeLog("DEBUG: MD5 %s exists" % md5)
+				continue
+
 			contenttype = part.get_content_type()
 
 			# New: Extract URLS
@@ -224,13 +304,15 @@ def main():
 				filename = part.get_filename()
 				if not filename:
 					filename = md5
+				writeLog('Found interesting file: %s (%s)' % (filename, contenttype))
 				ext = mimetypes.guess_extension(contenttype)
 				if not ext:
 					# Use a generic bag-of-bits extension
 					ext = '.bin'
 				filename = '%s%s' % (md5, ext)
 
-				fp = open(os.path.join(args.directory, filename), 'wb')
+
+				fp = open(os.path.join(generateDumpDirectory(args.directory), filename), 'wb')
 				fp.write(data)
 				fp.close()
 
@@ -268,6 +350,7 @@ def main():
 							submit2vt(os.path.join(args.directory, filename))
 							writeLog('File: %s (%s) not found, submited for scanning' %
 								(filename, md5))
+						dbAddMD5(md5)
 					else:
 						writeLog('VT Error: %s' % response['error'])
 

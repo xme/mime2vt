@@ -5,3 +5,6 @@ exclude: image/png,image/gif,image/jpeg,text/plain,text/html
 [elasticsearch]
 server: 127.0.0.1:9200
 index: virustotal
+
+[database]
+dbpath: /var/tmp/mime2vt.db
