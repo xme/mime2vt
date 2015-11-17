@@ -79,7 +79,7 @@ def dbMD5Exists(md5):
 		db = sqlite3.connect(config['dbPath'])
 	except:
 		writeLog("Cannot open the database file (locked?)")
-		return 1
+		return 0
 	cursor = db.cursor()
 	cursor.execute('''SELECT md5 FROM files WHERE md5=?''', (md5,))
 	if cursor.fetchone():
@@ -134,10 +134,9 @@ def generateDumpDirectory(path):
 	# %m -> month
 	# %d -> day
 	# %y -> year
-	t = datetime.date.today()
-	t_day   = '%02d' % t.day
-	t_month = '%02d' % t.month
-	t_year = '%04d' % t.year
+	t_day   = time.strftime("%d")
+	t_month = time.strftime("%m")
+	t_year  = time.strftime("%Y")
 	path.replace('%d', t_day)
 	path.replace('%m', t_month)
 	path.replace('%y', t_year)
@@ -172,7 +171,7 @@ def processZipFile(filename):
 		writeLog("DEBUG: Extracted MD5 %s from Zip" % md5)
 		vt = VirusTotalPublicApi(config['apiKey'])
 		response = vt.get_file_report(md5)
-		writeLog("DEBUG: VT Response recevied")
+		writeLog("DEBUG: VT Response received")
 
 		if config['esServer']:
 			# Save results to Elasticsearch
@@ -201,7 +200,7 @@ def processZipFile(filename):
 				submit2vt(os.path.join(generateDumpDirectory(args.directory), f))
 				writeLog('File: %s (%s) not found, submited for scanning' %
 					(f, md5))
-			dbAddMD5(md5)
+			dbAddMD5(md5,f)
 		else:
 			writeLog('VT Error: %s' % response['error'])
 	return
@@ -354,7 +353,7 @@ def main():
 							submit2vt(os.path.join(args.directory, filename))
 							writeLog('File: %s (%s) not found, submited for scanning' %
 								(filename, md5))
-						dbAddMD5(md5)
+						dbAddMD5(md5,filename)
 					else:
 						writeLog('VT Error: %s' % response['error'])
 
