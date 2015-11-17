@@ -137,9 +137,9 @@ def generateDumpDirectory(path):
 	t_day   = time.strftime("%d")
 	t_month = time.strftime("%m")
 	t_year  = time.strftime("%Y")
-	path.replace('%d', t_day)
-	path.replace('%m', t_month)
-	path.replace('%y', t_year)
+	path = path.replace('%d', t_day)
+	path = path.replace('%m', t_month)
+	path = path.replace('%y', t_year)
 	try:
 		os.makedirs(path)
 	except OSError as e:
