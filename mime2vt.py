@@ -147,6 +147,7 @@ def generateDumpDirectory(path):
 		# Ignore directory exists error
 		if e.errno != errno.EEXIST:
 			raise
+	writeLog("DEBUG: Generated directory: %s" % path)
 	return(path)
 
 def processZipFile(filename):
@@ -308,19 +309,18 @@ def main():
 				filename = part.get_filename()
 				if not filename:
 					filename = md5
-				writeLog('Found interesting file: %s (%s)' % (filename, contenttype))
 				ext = mimetypes.guess_extension(contenttype)
 				if not ext:
 					# Use a generic bag-of-bits extension
 					ext = '.bin'
 				filename = '%s%s' % (md5, ext)
-
+				writeLog('Found interesting file: %s (%s)' % (filename, contenttype))
 
 				fp = open(os.path.join(generateDumpDirectory(args.directory), filename), 'wb')
 				fp.write(data)
 				fp.close()
 
-				if contenttype == 'application/zip':
+				if contenttype in ['application/zip', 'application/x-zip-compressed']:
 					# Process ZIP archive
 					writeLog('Processing zip archive: %s' % filename)
 					processZipFile(os.path.join(generateDumpDirectory(args.directory), filename))
