@@ -28,6 +28,13 @@ from optparse import OptionParser
 from datetime import datetime
 from dateutil import parser
 
+# Try to use oletools
+try:
+	from oletools.olevba import VBA_Parser, TYPE_OLE, TYPE_OpenXML, TYPE_Word2003_XML, TYPE_MHTML
+	useOLETools = 1
+except:
+	useOLETools = 0
+
 args = ''
 
 # Default configuration 
@@ -142,12 +149,45 @@ def generateDumpDirectory(path):
 	path = path.replace('%y', t_year)
 	try:
 		os.makedirs(path)
+		writeLog("DEBUG: Generated directory: %s" % path)
 	except OSError as e:
 		# Ignore directory exists error
 		if e.errno != errno.EEXIST:
 			raise
-	writeLog("DEBUG: Generated directory: %s" % path)
+	# Fix corrext access rights on the direcrity (just for me)
+	try:
+		os.chmod(path, 0775)
+	except IOError as e:
+		writeLog("DEBUG: chmod() failed on %s: %s" % (path,e.strerror))
+
 	return(path)
+
+def parseOLEDocument(f):
+	"""Parse an OLE document for VBA macros"""
+	if not f or not useOLETools:
+		return
+
+	writeLog('DEBUG: Analyzing with oletools')
+	try:
+		v = VBA_Parser(f)
+	except:
+		writeLog("Not a supported file format: %s" % f)
+		return
+	writeLog('DEBUG: Detected file type: %s' % v.type)
+	if v.detect_vba_macros():
+		writeLog('DEBUG: VBA Macros found')
+		try:
+			t = open("%s.analysis" % f, 'w')
+		except IOError as e:
+			writeLog("Cannot create analysis file %s.analysis: %s" % (f,e.strerror))
+			return
+		for kw_type, keyword, description in v.analyze_macros():
+			t.write("%-12s | %-25s | %s\n" % (kw_type, keyword, description))
+		t.close()
+		writeLog("DEBUG: Analysis dumped to %s.analysis" % f)
+	else:
+		writeLog('DEBUG: No VBA Macros found')
+	return
 
 def processZipFile(filename):
 
@@ -203,6 +243,9 @@ def processZipFile(filename):
 			dbAddMD5(md5,f)
 		else:
 			writeLog('VT Error: %s' % response['error'])
+
+		# Analyze OLE documents if API is available
+		parseOLEDocument(os.path.join(generateDumpDirectory(args.directory), filename))
 	return
 
 def main():
@@ -274,14 +317,15 @@ def main():
 
 	# Process MIME parts
 	for part in msg.walk():
+		contenttype = part.get_content_type()
+		filename = part.get_param('name')
+		writeLog("DEBUG: Found data: %s (%s)" % (contenttype, filename))
 		data = part.get_payload(None, True)
 		if data:
 			md5 = hashlib.md5(data).hexdigest()
 			if dbMD5Exists(md5):
-				writeLog("DEBUG: MD5 %s exists" % md5)
+				writeLog("Skipping existing MD5 %s" % md5)
 				continue
-
-			contenttype = part.get_content_type()
 
 			# New: Extract URLS
 			if contenttype in [ 'text/html', 'text/plain' ]:
@@ -305,14 +349,16 @@ def main():
 			# Process only interesting files
 			# if contenttype not in ('text/plain', 'text/html', 'image/jpeg', 'image/gif', 'image/png'):
 			if contenttype not in excludetypes:
-				filename = part.get_filename()
 				if not filename:
 					filename = md5
-				ext = mimetypes.guess_extension(contenttype)
-				if not ext:
+				mime_ext = mimetypes.guess_extension(contenttype)
+				if not mime_ext:
 					# Use a generic bag-of-bits extension
-					ext = '.bin'
-				filename = '%s%s' % (md5, ext)
+					mime_ext = '.bin'
+				f_name, f_ext = os.path.splitext(filename)
+				if not f_ext:
+					filename += ext
+
 				writeLog('Found interesting file: %s (%s)' % (filename, contenttype))
 
 				fp = open(os.path.join(generateDumpDirectory(args.directory), filename), 'wb')
@@ -350,12 +396,15 @@ def main():
 							writeLog('File: %s (%s) Score: %s/%s Scanned: %s (%s)' %
 								(filename, md5, positives, total, scan_date, timeDiff(scan_date)))
 						else:
-							submit2vt(os.path.join(args.directory, filename))
+							submit2vt(os.path.join(generateDumpDirectory(args.directory), filename))
 							writeLog('File: %s (%s) not found, submited for scanning' %
 								(filename, md5))
 						dbAddMD5(md5,filename)
 					else:
 						writeLog('VT Error: %s' % response['error'])
+
+					# Analyze OLE documents if API is available
+					parseOLEDocument(os.path.join(generateDumpDirectory(args.directory), filename))
 
 if __name__ == '__main__':
     main()
