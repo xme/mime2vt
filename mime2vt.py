@@ -357,7 +357,7 @@ def main():
 					mime_ext = '.bin'
 				f_name, f_ext = os.path.splitext(filename)
 				if not f_ext:
-					filename += ext
+					filename += mime_ext
 
 				writeLog('Found interesting file: %s (%s)' % (filename, contenttype))
 
