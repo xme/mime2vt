@@ -1,0 +1,14 @@
+SHELL="/bin/bash"
+DELIVER=/usr/lib/dovecot/deliver
+LOGFILE="/var/log/procmail.log"
+
+# Parse every e-mail, not only spam etc.
+
+:0
+{
+   :0c
+   | /usr/local/bin/mime2vt.py -d /tmp/mime -c /home/xavier/mime2vt.conf
+
+   :0
+   | $DELIVER  -d $LOGNAME
+}
