@@ -245,7 +245,7 @@ def processZipFile(filename):
 			writeLog('VT Error: %s' % response['error'])
 
 		# Analyze OLE documents if API is available
-		parseOLEDocument(os.path.join(generateDumpDirectory(args.directory), filename))
+		parseOLEDocument(os.path.join(generateDumpDirectory(args.directory), f))
 	return
 
 def main():
