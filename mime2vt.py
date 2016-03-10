@@ -27,6 +27,7 @@ from virus_total_apis import PublicApi as VirusTotalPublicApi
 from optparse import OptionParser
 from datetime import datetime
 from dateutil import parser
+import pyzmail
 
 # Try to use oletools
 try:
@@ -258,6 +259,34 @@ def processZipFile(filename):
 		parseOLEDocument(os.path.join(generateDumpDirectory(args.directory), f))
 	return
 
+def parseMailheaders(data):
+
+	"""Extract useful e-mail headers"""
+
+	if data:
+		msg=pyzmail.PyzMessage.factory(data)
+
+		mailheaders = { "subject": msg.get_subject(),
+						"from": msg.get_address('from'),
+						"to": msg.get_addresses('to'),
+						"cc": msg.get_addresses('cc'),
+						"x-mailer": msg.get('x-mailer', ''),
+						"date": msg.get('date', ''),
+						"message-id": msg.get('message-id', ''),
+						"user-agent": msg.get('user-agent',''),
+						"x-virus-scanned": msg.get('x-virus-scanned',''),
+						"return-path": msg.get('return-path','')
+						}
+
+		received = msg.get('received','')
+		if received:
+			ip = re.findall( r'[0-9]+(?:\.[0-9]+){3}', received )
+			if ip:
+				mailheaders["ip"] = ip
+		return mailheaders
+	else:
+		return None
+
 def main():
 	global args
 	global config
@@ -316,6 +345,7 @@ def main():
 	# Read the mail flow from STDIN
 	data = "" . join(sys.stdin)
 	msg = email.message_from_string(data)
+	mailheaders = parseMailheaders(data)
 
 	if args.dump_file:
 		try:
@@ -394,6 +424,8 @@ def main():
 					if config['esServer']:
 						try:
 							response['@timestamp'] = time.strftime("%Y-%m-%dT%H:%M:%S+01:00")
+							response['filename'] = filename
+							response['mail'] = mailheaders							
 							res = es.index(index=config['esIndex'], doc_type="VTresult", body=json.dumps(response))
 						except:
 							writeLog("Cannot index to Elasticsearch")
