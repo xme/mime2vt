@@ -154,11 +154,16 @@ def generateDumpDirectory(path):
 		# Ignore directory exists error
 		if e.errno != errno.EEXIST:
 			raise
+		else:
+			return(path)
+
 	# Fix corrext access rights on the direcrity (just for me)
 	try:
+		writeLog("DEBUG: chmod() on %s" % path)
 		os.chmod(path, 0775)
 	except IOError as e:
 		writeLog("DEBUG: chmod() failed on %s: %s" % (path,e.strerror))
+		raise
 
 	return(path)
 
@@ -174,8 +179,13 @@ def parseOLEDocument(f):
 		writeLog("Not a supported file format: %s" % f)
 		return
 	writeLog('DEBUG: Detected file type: %s' % v.type)
-	if v.detect_vba_macros():
-		writeLog('DEBUG: VBA Macros found')
+
+	# Hack: Search for a .js extension
+	fname, fextension = os.path.splitext(f)
+	writeLog("DEBUG (parseOLE): Found extension == %s (%s)" % (fextension,f))
+
+	if v.detect_vba_macros() or fextension == ".js":
+		writeLog('DEBUG: VBA Macros/JScript found')
 		try:
 			t = open("%s.analysis" % f, 'w')
 		except IOError as e:
@@ -319,7 +329,13 @@ def main():
 	for part in msg.walk():
 		contenttype = part.get_content_type()
 		filename = part.get_param('name')
-		writeLog("DEBUG: Found data: %s (%s)" % (contenttype, filename))
+
+		# Hack: Search for a .js extension
+		try:
+			fname, fextension = os.path.splitext(filename)
+		except:
+			fextension = "none"
+
 		data = part.get_payload(None, True)
 		if data:
 			md5 = hashlib.md5(data).hexdigest()
@@ -348,7 +364,7 @@ def main():
 
 			# Process only interesting files
 			# if contenttype not in ('text/plain', 'text/html', 'image/jpeg', 'image/gif', 'image/png'):
-			if contenttype not in excludetypes:
+			if contenttype not in excludetypes or fextension == '.js':
 				if not filename:
 					filename = md5
 				mime_ext = mimetypes.guess_extension(contenttype)
