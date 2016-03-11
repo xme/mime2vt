@@ -76,7 +76,14 @@ def dbCreate():
 		db = sqlite3.connect(config['dbPath'])
 		cursor = db.cursor()
 		cursor.execute('''
-			CREATE TABLE files(md5 TEXT PRIMARY KEY, filename TEXT, created DATETIME DEFAULT CURRENT_TIMESTAMP)
+			CREATE TABLE files(md5 TEXT PRIMARY KEY, 
+					filename TEXT,
+					first_vt_score TEXT,
+					last_vt_score TEXT,
+					first_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+					last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+					occurrences INTEGER
+					)
 			''')
 		cursor.execute('''
 			CREATE TABLE urls(url TEXT)
@@ -104,7 +111,7 @@ def dbMD5Exists(md5):
 	db.close()
 	return 0
 
-def dbAddMD5(md5, filename):
+def dbAddMD5(md5, filename, vt):
 	""" Store a new MD5 hash in the database """
 	if not md5 or not filename:
 		return 0
@@ -113,8 +120,23 @@ def dbAddMD5(md5, filename):
 	except:
 		writeLog("Cannot open the database file (locked?)")
 		return 0
+
+	writeLog("DEBUG: dbAddMD5: Checking if MD5 exists")
 	cursor = db.cursor()
-	cursor.execute('''INSERT INTO files(md5,filename) VALUES(?,?)''', (md5,filename,))
+	cursor.execute('''SELECT md5,occurrences FROM files WHERE md5=?''', (md5,))
+	row = cursor.fetchone()
+	if row:
+		occ = int(row[1]) + 1
+		# Update existing record
+		cursor.execute('''UPDATE files SET last_seen = DATETIME("now"), 
+						occurrences = ?,
+						last_vt_score = ?
+						WHERE md5=?''', (occ, vt, md5,))
+		writeLog("DEBUG: db record updated")
+	else:
+		# Insert new record
+		cursor.execute('''INSERT INTO files(md5,filename,first_vt_score, occurrences) VALUES(?,?,?,1)''', (md5, filename, vt))
+		writeLog("DEBUG: db record created")
 	db.commit()
 	db.close()
 	writeLog("DEBUG: dbAddMD5: %s" % md5)
@@ -132,6 +154,11 @@ def submit2vt(filename):
 	fp = open('/tmp/vt.debug', 'a')
 	fp.write(json.dumps(response, sort_keys=False, indent=4))
 	fp.close()
+
+	if response['response_code'] == 200:
+		writeLog("VT Reply: %s" % response['results']['verbose_msg'])
+	else:
+		writeLog('VT Error: %s' % response['error'])
 
 	if config['esServer']:
 		# Save results to Elasticsearch
@@ -228,9 +255,9 @@ def processZipFile(filename):
 		md5 = hashlib.md5(data).hexdigest()
 		writeLog("Unzipped %s (%s)" % (f, md5))
 
-		if dbMD5Exists(md5):
-			writeLog("Skipped %s (known MD5)" % f)
-			continue
+		#if dbMD5Exists(md5):
+		#	writeLog("Skipped %s (known MD5)" % f)
+		#	continue
 
 		vt = VirusTotalPublicApi(config['apiKey'])
 		response = vt.get_file_report(md5)
@@ -251,22 +278,25 @@ def processZipFile(filename):
 		fp.close()
 		# writeLog("DEBUG: Step1: %s" % response['results']['response_code'])
 
+		vtScore = "0/0"
 		if response['response_code'] == 200:
 			if response['results']['response_code']:
 				positives = response['results']['positives']
 				total = response['results']['total']
 				scan_date = response['results']['scan_date']
-				if total > 0:
+				vtScore = str(positives) + "/" + str(total)
+				if positives > 0:
 					# File is malicious
 					rcode = 1
 
-				writeLog('File: %s (%s) Score: %s/%s Scanned: %s (%s)' %
-					(f, md5, positives, total, scan_date, timeDiff(scan_date)))
+				writeLog('File: %s (%s) Score: %s Scanned: %s (%s)' %
+					(f, md5, vtScore, scan_date, timeDiff(scan_date)))
 			else:
-				submit2vt(os.path.join(generateDumpDirectory(args.directory), f))
-				writeLog('File: %s (%s) not found, submited for scanning' %
-					(f, md5))
-			dbAddMD5(md5,f)
+				# Do not resubmit existing MD5
+				if !dbMD5Exists(md5):
+					writeLog('File: %s (%s) not found, submited for scanning' % (f, md5))
+					submit2vt(os.path.join(generateDumpDirectory(args.directory), f))
+			dbAddMD5(md5, f, vtScore)
 		else:
 			writeLog('VT Error: %s' % response['error'])
 
@@ -387,9 +417,9 @@ def main():
 		data = part.get_payload(None, True)
 		if data:
 			md5 = hashlib.md5(data).hexdigest()
-			if dbMD5Exists(md5):
-				writeLog("Skipping existing MD5 %s" % md5)
-				continue
+			#if dbMD5Exists(md5):
+			#	writeLog("Skipping existing MD5 %s" % md5)
+			#	continue
 
 			# New: Extract URLS
 			if contenttype in [ 'text/html', 'text/plain' ]:
@@ -454,21 +484,25 @@ def main():
 					fp.write(json.dumps(response, sort_keys=False, indent=4))
 					fp.close()
 
+					vtScore = "0/0"
 					if response['response_code'] == 200:
 						if response['results']['response_code']:
 							positives = response['results']['positives']
 							total = response['results']['total']
 							scan_date = response['results']['scan_date']
-							if total > 0:
+							vtScore = str(positives) + "/" + str(total)
+							if positives > 0:
 								rcode = 1
 
-							writeLog('File: %s (%s) Score: %s/%s Scanned: %s (%s)' %
-								(filename, md5, positives, total, scan_date, timeDiff(scan_date)))
+							writeLog('File: %s (%s) Score: %s Scanned: %s (%s)' %
+								(filename, md5, vtScore, scan_date, timeDiff(scan_date)))
 						else:
-							submit2vt(os.path.join(generateDumpDirectory(args.directory), filename))
-							writeLog('File: %s (%s) not found, submited for scanning' %
-								(filename, md5))
-						dbAddMD5(md5,filename)
+							# Do not resubmit existing MD5
+							if !dbMD5Exists(md5):
+								writeLog('File: %s (%s) not found, submited for scanning' %
+									(filename, md5))
+								submit2vt(os.path.join(generateDumpDirectory(args.directory), filename))
+						dbAddMD5(md5, filename, vtScore)
 					else:
 						writeLog('VT Error: %s' % response['error'])
 
