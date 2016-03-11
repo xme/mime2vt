@@ -27,7 +27,6 @@ from virus_total_apis import PublicApi as VirusTotalPublicApi
 from optparse import OptionParser
 from datetime import datetime
 from dateutil import parser
-import pyzmail
 
 # Try to use oletools
 try:
@@ -35,6 +34,13 @@ try:
 	useOLETools = 1
 except:
 	useOLETools = 0
+
+# Try to use pyzmail
+try:
+	import pyzmail
+	usePyzMail = 1
+except:
+	usePyzMail = 0
 
 args = ''
 
@@ -46,6 +52,8 @@ config = {
 	'dbPath': '/var/tmp/mime2vt.db'
 }
 
+# Return code
+rcode = 0
 
 def timeDiff(t):
 
@@ -169,7 +177,9 @@ def generateDumpDirectory(path):
 	return(path)
 
 def parseOLEDocument(f):
+
 	"""Parse an OLE document for VBA macros"""
+
 	if not f or not useOLETools:
 		return
 
@@ -183,7 +193,6 @@ def parseOLEDocument(f):
 
 	# Hack: Search for a .js extension
 	fname, fextension = os.path.splitext(f)
-	writeLog("DEBUG (parseOLE): Found extension == %s (%s)" % (fextension,f))
 
 	if v.detect_vba_macros() or fextension == ".js":
 		writeLog('DEBUG: VBA Macros/JScript found')
@@ -204,6 +213,8 @@ def processZipFile(filename):
 
 	"""Extract files from a ZIP archive and test them against VT"""
 
+	global rcode
+
 	zf = zipfile.ZipFile(filename)
 	for f in zf.namelist():
 		try:
@@ -215,14 +226,15 @@ def processZipFile(filename):
 		fp.write(data)
 		fp.close()
 		md5 = hashlib.md5(data).hexdigest()
+		writeLog("Unzipped %s (%s)" % (f, md5))
+
 		if dbMD5Exists(md5):
-			writeLog("DEBUG: MD5 %s exists" % md5)
+			writeLog("Skipped %s (known MD5)" % f)
 			continue
 
-		writeLog("DEBUG: Extracted MD5 %s from Zip" % md5)
 		vt = VirusTotalPublicApi(config['apiKey'])
 		response = vt.get_file_report(md5)
-		writeLog("DEBUG: VT Response received")
+		# writeLog("DEBUG: VT Response received")
 
 		if config['esServer']:
 			# Save results to Elasticsearch
@@ -231,19 +243,22 @@ def processZipFile(filename):
 				res = es.index(index=config['esIndex'], doc_type="VTresult", body=json.dumps(response))
 			except:
 				writeLog("Cannot index to Elasticsearch")
-		writeLog("DEBUG: Step1")
+		# writeLog("DEBUG: Step1")
 
 		# DEBUG
 		fp = open('/tmp/vt.debug', 'a')
 		fp.write(json.dumps(response, sort_keys=False, indent=4))
 		fp.close()
-		writeLog("DEBUG: Step1: %s" % response['results']['response_code'])
+		# writeLog("DEBUG: Step1: %s" % response['results']['response_code'])
 
 		if response['response_code'] == 200:
 			if response['results']['response_code']:
 				positives = response['results']['positives']
 				total = response['results']['total']
 				scan_date = response['results']['scan_date']
+				if total > 0:
+					# File is malicious
+					rcode = 1
 
 				writeLog('File: %s (%s) Score: %s/%s Scanned: %s (%s)' %
 					(f, md5, positives, total, scan_date, timeDiff(scan_date)))
@@ -292,6 +307,7 @@ def main():
 	global config
 	global es
 	global verbose
+	global rcode
 
 	parser = argparse.ArgumentParser(
 		description = 'Unpack MIME attachments from a file and check them against virustotal.com')
@@ -345,7 +361,9 @@ def main():
 	# Read the mail flow from STDIN
 	data = "" . join(sys.stdin)
 	msg = email.message_from_string(data)
-	mailheaders = parseMailheaders(data)
+
+	if usePyzMail:
+		mailheaders = parseMailheaders(data)
 
 	if args.dump_file:
 		try:
@@ -425,7 +443,8 @@ def main():
 						try:
 							response['@timestamp'] = time.strftime("%Y-%m-%dT%H:%M:%S+01:00")
 							response['filename'] = filename
-							response['mail'] = mailheaders							
+							if usePyzMail:
+								response['mail'] = mailheaders
 							res = es.index(index=config['esIndex'], doc_type="VTresult", body=json.dumps(response))
 						except:
 							writeLog("Cannot index to Elasticsearch")
@@ -440,6 +459,8 @@ def main():
 							positives = response['results']['positives']
 							total = response['results']['total']
 							scan_date = response['results']['scan_date']
+							if total > 0:
+								rcode = 1
 
 							writeLog('File: %s (%s) Score: %s/%s Scanned: %s (%s)' %
 								(filename, md5, positives, total, scan_date, timeDiff(scan_date)))
@@ -455,4 +476,7 @@ def main():
 					parseOLEDocument(os.path.join(generateDumpDirectory(args.directory), filename))
 
 if __name__ == '__main__':
-    main()
+	main()
+	if rcode:
+		writeLog("Mail contains malicious content!")
+	sys.exit(rcode)
