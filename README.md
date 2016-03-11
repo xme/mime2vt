@@ -41,6 +41,20 @@ Information is sent via Syslog:
 Dec 12 18:41:20 marge mime2vt.py[1104]: Processing zip archive: 4359ae6078390f417ab0d4411527a5c2.zip
 Dec 12 18:41:21 marge mime2vt.py[1104]: File: VOICE748-348736.scr (acb05e95d713b1772fb96a5e607d539f) Score: 38/53 Scanned: 2014-11-13 15:45:04 (29 days, 2:56:17)
 
+A SQLite database is created to store useful information about the malicious files:
+
+<pre>
+CREATE TABLE files(md5 TEXT PRIMARY KEY,
+                   filename TEXT,
+                   first_vt_score TEXT,
+                   last_vt_score TEXT,
+                   first_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+                   last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+                   occurrences INTEGER
+)
+</pre>
+The database is created automatically if not present.
+
 Requirements
 ----
 <pre>
